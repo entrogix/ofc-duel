@@ -1,0 +1,7 @@
+# OFCターボ app-ads.txt
+# 公開Webサイト（独自ドメイン）のルートに設置する: https://<your-domain>/app-ads.txt
+# AdMob管理画面で発行されるパブリッシャーID（pub-XXXXXXXXXXXXXXXX）に差し替えること。
+# 設置後、AdMob の「アプリ > app-ads.txt」でステータスが「見つかりました」になるまで数日かかる。
+#
+# 形式: <広告システムのドメイン>, <パブリッシャーID>, <関係: DIRECT/RESELLER>, <認証局ID>
+google.com, pub-0000000000000000, DIRECT, f08c47fec0942fa0

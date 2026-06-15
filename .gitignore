@@ -1,0 +1,29 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+dist/
+build/
+coverage/
+
+# Expo / React Native（prebuild生成物。git管理しない）
+packages/app/ios/
+packages/app/android/
+packages/app/.expo/
+
+# サーバーのランタイムデータ（レートDB）
+packages/server/data/
+ratings.json
+
+# Claude Code
+.claude/settings.local.json

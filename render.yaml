@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: ofc-duel-server
+    runtime: node
+    rootDir: packages/server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+    # 無料枠: 15分無通信でスリープ。常時起動は plan: standard ($7/月) に変更
+    plan: free

@@ -1,0 +1,22 @@
+export const colors = {
+  felt: '#0b3d2e',
+  feltDark: '#072a20',
+  panel: '#10493a',
+  panelLight: '#1a5c4a',
+  gold: '#d4af37',
+  goldDim: '#a8892b',
+  text: '#f2efe6',
+  textDim: '#b8c4bd',
+  cardFace: '#faf7ef',
+  cardBorder: '#2e2a22',
+  red: '#c0392b',
+  black: '#1c1c1c',
+  accent: '#3ddc97',
+  danger: '#e05c4f',
+  slot: 'rgba(255,255,255,0.12)',
+  pending: '#ffd866',
+  // ファンタジーランド（フィーバー）配色
+  feverFelt: '#2d1145',
+  feverPanel: '#42205f',
+  feverAccent: '#e1bee7',
+};
