@@ -1,4 +1,4 @@
-# OFCターボ — ストア公開＆広告掲載の下準備チェックリスト
+# OFCデュエル — ストア公開＆広告掲載の下準備チェックリスト
 
 作成日: 2026-06-13（料金・要件は変わるため申請前に公式で再確認すること）
 
@@ -51,16 +51,22 @@
 - **特定商取引法**: アプリ内課金をしないなら不要
 - **賭博関連**: 実マネー・換金要素なし（アプリ内チップのみ）なら賭博に該当しない。リワード広告でチップ付与もOK
 - **確定申告**: 広告収益が給与外所得20万円/年を超えたら申告（DMM勤務の給与所得者の場合）
-- **商標**: 「OFCターボ」の名称はブログ由来。**ストア公開前に元ブログ著者への一声を強く推奨**（ルール自体に著作権はないが、名称・出典明記の仁義として）
+- **商標**: 「OFCデュエル」は独自名称。元ブログ（boardgameblog.net）の「ターボ」名は使用しておらず商標リスクは低いが、ルール出典としてブログ著者への一声は引き続き推奨
 
-## 5. コード側でこれから必要な作業（参考）
+## 5. コード側の作業状況
 
-- [ ] EAS（`eas init` / `eas build`）セットアップ — Expoアカウント無料枠で月数回ビルド可
-- [ ] アプリアイコン・スプラッシュ画像の差し替え（現在はExpoデフォルト）
-- [ ] `app.json`: bundleIdentifier（例 `com.entrogix.ofcturbo`）/ package 名の決定 ※後から変更不可
-- [ ] `react-native-google-mobile-ads` 導入＋テストID実装＋ATT対応
-- [ ] オンライン対戦サーバーの公開デプロイ（Render/Fly.io等）またはv1はCPU対戦のみで公開
-- [ ] プライバシーポリシーページ作成
+- [x] EAS（`eas init`）セットアップ済み — `app.json` に `projectId` 設定済み。`eas build` はExpoアカウントでログインしてから実行
+- [x] アプリアイコン・スプラッシュ画像 — `assets/` に生成済み（icon.png / splash-icon.png / adaptive icon 一式）
+- [x] `app.json`: bundleIdentifier `com.entrogix.ofcduel` / package 設定済み
+- [x] `react-native-google-mobile-ads` 導入＋ATT実装済み
+- [x] 本番 AdMob App ID・広告ユニットID（バナー/インタースティシャル）差し替え済み（`__DEV__` でテストID切替）
+- [x] プライバシーポリシー作成済み（`store/privacy-policy.html`）— GitHub Pages 自動デプロイ設定済み
+- [x] Render デプロイ設定（`render.yaml`）作成済み — サーバーURL: `wss://ofc-duel-server.onrender.com`
+- [x] アプリバージョン 1.0.0 に更新
+- [x] フィーチャーグラフィック（`store/feature-graphic.png` 1024×500）— 新ロゴで再生成（2026-06-20）
+- [x] ストア用スクリーンショット（`store/screenshots/01〜04` 1290×2796 = iPhone 6.7"／Play兼用）— Web版から自動キャプチャ（2026-06-20）
+- [ ] EAS Build 実行（`eas build -p android --profile production` / `-p ios`）— Expoアカウントでのログインが必要
+- [ ] オンライン対戦サーバーを Render にデプロイ（GitHub push → Render ダッシュボードで接続）
 
 ## 広告の実装状況（2026-06-14 時点）
 
@@ -70,12 +76,12 @@
 - AdMob初期化＋iOSのATT許可要求: 起動時（`src/ads/init.native.ts`）
 - 現在は **テスト用広告ユニットID（ライブラリの TestIds）** を使用。Web / Expo Go ではダミー表示（実広告なし、拡張子分割で安全に無効化）
 
-**リリース前にやること**:
-- [ ] AdMob でアプリを登録し、本番の **App ID** と **広告ユニットID**（バナー／インタースティシャル）を取得
-- [ ] `app.json` の `androidAppId` / `iosAppId` を本番 App ID に差し替え（今はGoogleのテストApp ID）
-- [ ] `AdBanner.native.tsx` と `interstitial.native.ts` の `TestIds.*` を本番ユニットIDに差し替え
-- [ ] AdMob 管理画面でアプリとストアURLを紐付け（ストア公開後）
-- [ ] `app-ads.txt` を公開Webサイトに設置（任意・収益の信頼性向上）
+**実装状況**:
+- [x] `app.json` の `androidAppId` / `iosAppId` を本番 App ID に差し替え済み
+- [x] `AdBanner.native.tsx` と `interstitial.native.ts` に本番ユニットIDを設定済み（`__DEV__` でテストID切替）
+- [x] `store/app-ads.txt` に本番パブリッシャーID (`pub-1044199138394823`) を設定済み
+- [ ] AdMob 管理画面でアプリとストアURLを紐付け（ストア公開**後**に実施）
+- [ ] `app-ads.txt` を公開Webサイトのルートに設置（GitHub Pages デプロイ後）
 
 ## ストア審査の申告（データ安全性 / App Privacy）
 
@@ -121,7 +127,7 @@
 - コード・UI・ロゴ・アイコンはすべて自作 → 著作権は制作者に帰属。クレジット画面に `© 2026 Entrogix` を明記済み
 - トランプのスート記号（♠♥♦♣）・数字は一般的記号で著作権の対象外
 - 「OFC（Open Face Chinese）」はゲームの一般名称。名称・出典について元ブログ（boardgameblog.net）著者へ一報を入れておくと安心
-- 商標: 「OFCターボ」で他社の登録商標と衝突しないか、出願前に J-PlatPat 等で軽く確認
+- 商標: 「OFCデュエル」で他社の登録商標と衝突しないか、出願前に J-PlatPat 等で軽く確認
 
 ### サードパーティライセンス（対応済み）
 - 依存OSSは MIT 522 / ISC / BSD / Apache-2.0 等の**寛容ライセンスのみ**（GPL等のコピーレフト・配布制限なしを確認済み）
