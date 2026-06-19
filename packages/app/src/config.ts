@@ -6,5 +6,5 @@ export const SERVER_URL = 'wss://ofc-duel-server.onrender.com';
 // 問い合わせフォームの送信先（POST先のHTTPS URL）。
 // Formspree や Google Apps Script など、JSONを受けるエンドポイントを設定する。
 // 空のままなら、送信時にメールアプリ（mailto）へフォールバックする。
-export const CONTACT_ENDPOINT = '';
+export const CONTACT_ENDPOINT = 'https://formspree.io/f/xaqzregd';
 export const CONTACT_EMAIL = 'entrogix.works@gmail.com';
