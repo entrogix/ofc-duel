@@ -59,7 +59,7 @@ export function CreditsScreen({ onBack }: { onBack: () => void }) {
         </Section>
 
         <Section title="お問い合わせ">
-          <Credit label="sou0430@gmail.com" url="mailto:sou0430@gmail.com" />
+          <Credit label="entrogix.works@gmail.com" url="mailto:entrogix.works@gmail.com" />
         </Section>
       </ScrollView>
       <Pressable style={styles.backBtn} onPress={onBack}>
