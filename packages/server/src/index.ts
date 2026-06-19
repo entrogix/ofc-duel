@@ -400,7 +400,7 @@ function scheduleAutoPlace(room: Room, playerId: string): void {
 // HTTPサーバーを内包（Render等のヘルスチェックに200を返す）。WSはupgradeで処理
 const httpServer = createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-  res.end('OFC Turbo server is running');
+  res.end('OFCデュエル server is running');
 });
 const wss = new WebSocketServer({ server: httpServer });
 
