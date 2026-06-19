@@ -7,4 +7,4 @@ export const SERVER_URL = 'wss://ofc-duel-server.onrender.com';
 // Formspree や Google Apps Script など、JSONを受けるエンドポイントを設定する。
 // 空のままなら、送信時にメールアプリ（mailto）へフォールバックする。
 export const CONTACT_ENDPOINT = '';
-export const CONTACT_EMAIL = 'sou0430@gmail.com';
+export const CONTACT_EMAIL = 'entrogix.works@gmail.com';
