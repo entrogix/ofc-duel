@@ -24,7 +24,7 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.felt,
+    backgroundColor: '#00593b',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
