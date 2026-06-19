@@ -112,7 +112,7 @@ function ModeCard({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.felt },
+  container: { flex: 1, backgroundColor: '#00593b' },
   content: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
   logoWrap: { marginBottom: 22 },
   card: {
