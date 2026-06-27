@@ -1,6 +1,6 @@
 // サーバーのスモークテスト: 2クライアントで1ゲーム完走できるか
 import WebSocket from 'ws';
-import { chooseCpuPlacement } from '../../shared/src/ai';
+import { chooseCpuPlacementWithDiscard } from '../../shared/src/ai';
 import type { PlayerGameView } from '../../shared/src/view';
 
 const URL = `ws://localhost:${process.env.PORT ?? 8787}`;
@@ -55,7 +55,8 @@ async function main(): Promise<void> {
           const key = `${view.handNumber}:${view.street}`;
           if (view.phase === 'placing' && !view.you.submitted && view.you.dealt.length > 0 && !bot.placedKeys.has(key)) {
             bot.placedKeys.add(key);
-            const placements = chooseCpuPlacement(view.you.board, view.you.dealt);
+            // 1枚捨てルール: needPlace 枚だけ配置（残り1枚は自動で捨て札）
+            const { placements } = chooseCpuPlacementWithDiscard(view.you.board, view.you.dealt, view.you.needPlace);
             send(bot, { type: 'place', placements });
           } else if (view.phase === 'hand_result' && bot.isHost && !bot.nextSentKeys.has(key)) {
             bot.nextSentKeys.add(key);

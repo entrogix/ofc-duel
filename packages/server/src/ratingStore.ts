@@ -58,6 +58,21 @@ export function getRating(uid: string): number {
   return getStats(uid).rating;
 }
 
+// 累計プレイヤー数（1局以上完了したUID数）。/stats の totalPlayers 用。
+export function getPlayerCount(): number {
+  return Object.keys(store).length;
+}
+
+// 指定エポックms以降に対戦したユニークUID数（日次/週次アクティブの近似）。
+// ⚠️ Render無料枠はディスク揮発のため再デプロイで0に戻る点に注意。
+export function getActiveSince(sinceMs: number): number {
+  let n = 0;
+  for (const s of Object.values(store)) {
+    if (s.updatedAt >= sinceMs) n += 1;
+  }
+  return n;
+}
+
 export interface RankingEntry {
   uid: string;
   name: string;

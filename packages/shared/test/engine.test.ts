@@ -16,17 +16,16 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-// 各ストリートで「置く」枚数（残り1枚は捨て）
-function placeCountFor(p: PlayerState, street: number): number {
-  if (p.inFantasy) return 13;
-  return [5, 4, 4][street];
+// 各ストリートで「置く」枚数（残り1枚は捨て）。配り枚数 = 置き枚数 + 1。
+function placeCountFor(p: PlayerState): number {
+  return Math.max(0, p.dealt.length - 1);
 }
 
 function cpuPlayAll(engine: GameEngine, rng: () => number): void {
   const s: GameState = engine.state;
   for (const p of s.players) {
     if (p.submitted) continue;
-    const n = placeCountFor(p, s.street);
+    const n = placeCountFor(p);
     const { placements } = chooseCpuPlacementWithDiscard(p.board, p.dealt, n, rng);
     engine.submitPlacement(p.id, placements);
   }
@@ -116,6 +115,59 @@ test('ビュー: 配置・捨て札は確定まで相手に見えず、確定で
   assert.equal(after.phase, 'hand_result');
   assert.ok(after.boards && after.boards.length === 2);
   assert.equal(after.opponents[0].discards.length, 3, '精算時は捨て札3枚すべて公開');
+});
+
+test('FL絡みハンド: 非FLプレイヤーは相手のFL一括配置を待たずに自分のストリートを最後まで進められる', () => {
+  const rng = mulberry32(5);
+  const engine = new GameEngine([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], { rng });
+  // ハンド1を消化して hand_result へ
+  for (let st = 0; st < 3; st++) cpuPlayAll(engine, rng);
+  assert.equal(engine.state.phase, 'hand_result');
+  // b を次ハンドFL確定にして次ハンドへ
+  engine.state.players[1].nextFantasy = true;
+  engine.nextHand();
+  assert.equal(engine.state.phase, 'placing');
+  const a = engine.state.players[0];
+  const b = engine.state.players[1];
+  assert.equal(b.inFantasy, true);
+  assert.equal(a.inFantasy, false);
+  assert.equal(b.dealt.length, 14, 'FLは14枚一括');
+  assert.equal(a.dealt.length, 6, 'aは通常6枚');
+
+  // a だけが自分のストリートを最後まで進める（b は一括配置せず未submitのまま）
+  for (let st = 0; st < 3; st++) {
+    assert.equal(engine.state.phase, 'placing');
+    const n = a.dealt.length - 1;
+    const { placements } = chooseCpuPlacementWithDiscard(a.board, a.dealt, n, rng);
+    engine.submitPlacement('a', placements);
+  }
+  assert.ok(boardIsComplete(a.board), 'a は相手のFLを待たず全配置完了');
+  assert.equal(a.street, 2, 'a は street2 まで進んでいる');
+  assert.equal(b.submitted, false, 'b はまだ未配置');
+  assert.equal(engine.state.phase, 'placing', 'b が残っているので精算前');
+
+  // b が FL 13枚を一括配置 → 両者完成で精算
+  const { placements: bp } = chooseCpuPlacementWithDiscard(b.board, b.dealt, 13, rng);
+  engine.submitPlacement('b', bp);
+  assert.equal(engine.state.phase, 'hand_result', '両者完成で精算');
+});
+
+test('FL中プレイヤーのボードは精算まで相手に非公開', () => {
+  const rng = mulberry32(8);
+  const engine = new GameEngine([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], { rng });
+  for (let st = 0; st < 3; st++) cpuPlayAll(engine, rng);
+  engine.state.players[1].nextFantasy = true;
+  engine.nextHand();
+  const b = engine.state.players[1];
+  // b が13枚を一括配置（盤面完成）
+  const { placements: bp } = chooseCpuPlacementWithDiscard(b.board, b.dealt, 13, rng);
+  engine.submitPlacement('b', bp);
+  // a視点では b は FL なので盤面非公開（枚数のみ）
+  const v = viewFor(engine.state, 'a');
+  const opp = v.opponents[0];
+  assert.equal(opp.inFantasy, true);
+  assert.equal(opp.hiddenFantasy, true);
+  assert.equal(opp.board.front.length + opp.board.middle.length + opp.board.back.length, 0, 'FLボードは見えない');
 });
 
 test('不正な配置は拒否される', () => {

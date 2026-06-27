@@ -208,19 +208,21 @@ async function testRatedMatchUpdatesRating(): Promise<void> {
   console.log('✔ レート対戦: 完走で双方レート更新（初期1000・ゼロサム）');
 }
 
-async function testCasualDoesNotRate(): Promise<void> {
-  // カジュアルでは rating 通知が来ない
+async function testCasualAndRatedCrossMatch(): Promise<void> {
+  // カジュアル廃止: 旧クライアント(casual)と新クライアント(rated)が同一キューでマッチし、
+  // 双方レート扱いになる（population をひとつに集約してマッチ不成立を防ぐ）。
   const a = new TestClient();
   const b = new TestClient();
   await Promise.all([a.whenOpen(), b.whenOpen()]);
-  a.joinRandom('気軽A', 'casual', 'uid-c');
-  b.joinRandom('気軽B', 'casual', 'uid-d');
-  await waitFor(() => a.gameOver && b.gameOver, 18000, 'casual game over');
-  await wait(300);
-  assert.equal(a.ratingMsg, null, 'カジュアルはレート変動なし');
+  a.joinRandom('旧casual', 'casual', 'uid-c');
+  b.joinRandom('新rated', 'rated', 'uid-d');
+  await waitFor(() => a.matched && b.matched, 3000, 'casual×rated が同一キューでマッチ');
+  await waitFor(() => a.gameOver && b.gameOver, 18000, 'cross-match game over');
+  await waitFor(() => !!a.ratingMsg && !!b.ratingMsg, 3000, 'casualも含めレート通知');
+  assert.equal(a.ratingMsg!.delta + b.ratingMsg!.delta, 0, 'レート変動はゼロサム');
   a.close();
   b.close();
-  console.log('✔ カジュアル対戦: レート通知が来ない');
+  console.log('✔ 旧casual×新rated が同一キューでマッチし双方レート更新');
 }
 
 async function main(): Promise<void> {
@@ -232,7 +234,7 @@ async function main(): Promise<void> {
   await testAfkForcedByTimeout();
   await testReconnect();
   await testRatedMatchUpdatesRating();
-  await testCasualDoesNotRate();
+  await testCasualAndRatedCrossMatch();
 
   console.log('\nすべてのマッチングテスト成功');
   process.exit(0);

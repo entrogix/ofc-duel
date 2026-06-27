@@ -187,6 +187,72 @@ export function chooseCpuPlacement(board: Board, dealt: Card[], rng: () => numbe
   return bestAssignment(board, dealt, rng);
 }
 
+// 捨て候補の優先度（小さいほど捨ててよい）。ペア以上・フラッシュ／ストレートの芽を保護し、
+// 浮いた低ランクの単発カードから捨てる。FL探索の枝刈り用。
+function discardPriority(card: Card, all: Card[]): number {
+  let rankCount = 0;
+  let suitCount = 0;
+  for (const c of all) {
+    if (c.rank === card.rank) rankCount += 1;
+    if (c.suit === card.suit) suitCount += 1;
+  }
+  return rankCount * 1000 + suitCount * 10 + card.rank;
+}
+
+export type DiscardResult = { placements: Placement[]; discarded: Card[] };
+
+// FL（14枚配り→13枚配置・1枚捨て）専用の高速探索ジェネレータ。
+// 「どの1枚を捨てるか」を全14通り総当たりすると約100万盤面になりモバイルが数分フリーズするため、
+// 捨て候補を使い道の薄い順に上位数枚へ絞り、各候補で残り13枚の最適FL配置（約7.2万通り）を評価して最良を採る。
+// 一定評価ごとに yield するので、呼び出し側が複数フレームに分割して UI を固めずに計算できる。
+export function* fantasyWithDiscardSteps(
+  dealt: Card[],
+  rng: () => number = Math.random,
+): Generator<void, DiscardResult, void> {
+  const DISCARD_CANDIDATES = 3;
+  const YIELD_EVERY = 8000; // 約8千評価ごとに制御を返す（1チャンク数十ms）
+  const ranked = [...dealt].sort((a, b) => discardPriority(a, dealt) - discardPriority(b, dealt));
+  const candidates = ranked.slice(0, DISCARD_CANDIDATES);
+  let best: { placements: Placement[]; discarded: Card[]; score: number } | null = null;
+  let ops = 0;
+  for (const drop of candidates) {
+    const keep = dealt.filter((c) => c !== drop);
+    // bestFantasyPlacement 相当の探索をインライン展開し、途中で yield できるようにする
+    let localBest: Board | null = null;
+    let localScore = -Infinity;
+    for (const back of combinations(keep, 5)) {
+      const restAfterBack = keep.filter((c) => !back.includes(c));
+      for (const middle of combinations(restAfterBack, 5)) {
+        const front = restAfterBack.filter((c) => !middle.includes(c));
+        const score = exactScore({ front, middle, back }) + rng() * 0.01;
+        if (score > localScore) {
+          localScore = score;
+          localBest = { front, middle, back };
+        }
+        if (++ops % YIELD_EVERY === 0) yield;
+      }
+    }
+    if (!localBest) continue;
+    const placements: Placement[] = [];
+    for (const row of ROWS) for (const card of localBest[row]) placements.push({ card, row });
+    const score = exactScore(localBest) + rng() * 0.01;
+    if (!best || score > best.score) best = { placements, discarded: [drop], score };
+  }
+  if (!best) throw new Error('FL配置の探索に失敗しました');
+  return { placements: best.placements, discarded: best.discarded };
+}
+
+// 同期版（サーバー・スモークテスト用）: ジェネレータを最後まで回して結果を返す。
+function bestFantasyWithDiscard(
+  dealt: Card[],
+  rng: () => number,
+): { placements: Placement[]; discarded: Card[] } {
+  const gen = fantasyWithDiscardSteps(dealt, rng);
+  let step = gen.next();
+  while (!step.done) step = gen.next();
+  return step.value;
+}
+
 // 捨てあり版（ターボ・パイナップル）: dealt から placeCount 枚を選んで配置し、残りを捨てる。
 // 「どの placeCount 枚を残すか」を全列挙し、配置後の盤面評価が最良の選択を返す。
 export function chooseCpuPlacementWithDiscard(
@@ -197,6 +263,11 @@ export function chooseCpuPlacementWithDiscard(
 ): { placements: Placement[]; discarded: Card[] } {
   if (placeCount >= dealt.length) {
     return { placements: bestAssignment(board, dealt, rng), discarded: [] };
+  }
+  // FL（空盤面に14枚配り→13枚配置・1枚捨て）は組合せ爆発するため専用の高速パスへ
+  const boardEmpty = board.front.length + board.middle.length + board.back.length === 0;
+  if (boardEmpty && placeCount === 13 && dealt.length === 14) {
+    return bestFantasyWithDiscard(dealt, rng);
   }
   let best: { placements: Placement[]; discarded: Card[]; score: number } | null = null;
   for (const keep of combinations(dealt, placeCount)) {

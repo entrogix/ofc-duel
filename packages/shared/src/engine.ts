@@ -19,6 +19,7 @@ export interface PlayerState {
   revealDiscards: Card[]; // 公開済みの捨て札（前ストリートまで。同時公開用）
   dealt: Card[]; // 現ストリートの手札（配置数+1枚。最後の1枚が自動的に捨て札になる）
   submitted: boolean; // 現ストリートの配置を確定済みか
+  street: number; // このプレイヤー自身の現ストリート（0,1,2）。FL中は0で一括配置。FLが絡むハンドでは各自独立に進む
   inFantasy: boolean; // このハンドをFLで進行中
   nextFantasy: boolean; // 次ハンドFL確定
   isCpu: boolean;
@@ -43,7 +44,7 @@ export interface GameState {
   players: PlayerState[];
   deck: Card[];
   dealerIndex: number;
-  street: number; // 0,1,2（FLプレイヤーは street 0 で一括）
+  street: number; // 全体の最大ストリート（表示フォールバック用）。各プレイヤーの進行は player.street を参照
   phase: Phase;
   handNumber: number; // 1始まり
   dealerMovesDone: number; // ディーラーが移動した回数（FL中は移動しない）
@@ -90,6 +91,7 @@ export class GameEngine {
         revealDiscards: [],
         dealt: [],
         submitted: false,
+        street: 0,
         inFantasy: false,
         nextFantasy: false,
         isCpu: !!p.isCpu,
@@ -108,10 +110,9 @@ export class GameEngine {
     this.startHand();
   }
 
-  // このストリートで「置く」枚数（残りの dealt は捨て）
-  private placeCount(p: PlayerState, street: number): number {
-    if (p.inFantasy) return FL_PLACE;
-    return STREET_PLACE[street];
+  // このストリートで「置く」枚数（残りの dealt は捨て）。配り枚数 = 置き枚数 + 1。
+  private placeCount(p: PlayerState): number {
+    return p.inFantasy ? FL_PLACE : STREET_PLACE[p.street];
   }
 
   private startHand(): void {
@@ -127,30 +128,30 @@ export class GameEngine {
       p.revealDiscards = [];
       p.dealt = [];
       p.submitted = false;
+      p.street = 0;
       p.inFantasy = p.nextFantasy;
       p.nextFantasy = false;
     }
-    this.dealStreet();
+    for (const p of s.players) this.dealToPlayer(p);
   }
 
-  private dealStreet(): void {
+  // 1人のプレイヤーに自分の現ストリート（p.street）の手札を配る。
+  private dealToPlayer(p: PlayerState): void {
     const s = this.state;
-    for (const p of s.players) {
-      p.submitted = false;
-      // 前ストリートまでの配置・捨て札をここで「公開」する（全員確定→同時公開）
-      p.revealBoard = cloneBoard(p.board);
-      p.revealDiscards = p.discards.slice();
-      if (p.inFantasy) {
-        if (s.street === 0) {
-          p.dealt = s.deck.splice(0, FL_DEAL);
-        } else {
-          // FLプレイヤーは street 0 で配置済み
-          p.dealt = [];
-          p.submitted = true;
-        }
+    p.submitted = false;
+    // 前ストリートまでの配置・捨て札をここで「公開」する
+    p.revealBoard = cloneBoard(p.board);
+    p.revealDiscards = p.discards.slice();
+    if (p.inFantasy) {
+      if (p.street === 0) {
+        p.dealt = s.deck.splice(0, FL_DEAL);
       } else {
-        p.dealt = s.deck.splice(0, STREET_DEALS[s.street]);
+        // FLプレイヤーは street 0 で一括配置済み
+        p.dealt = [];
+        p.submitted = true;
       }
+    } else {
+      p.dealt = s.deck.splice(0, STREET_DEALS[p.street]);
     }
   }
 
@@ -167,7 +168,7 @@ export class GameEngine {
     const p = s.players[this.playerIndex(playerId)];
     if (p.submitted) throw new Error('すでに確定済みです');
 
-    const need = this.placeCount(p, s.street);
+    const need = this.placeCount(p);
     if (placements.length !== need) throw new Error(`${need}枚を配置してください（残り1枚は捨て札）`);
 
     // 配置カードが手札にある・重複なしか
@@ -198,21 +199,48 @@ export class GameEngine {
     p.discards = p.discards.concat(discarded);
     p.dealt = [];
     p.submitted = true;
-    this.maybeAdvance();
+    this.advance();
   }
 
-  private maybeAdvance(): void {
+  private allBoardsComplete(): boolean {
+    return this.state.players.every((p) => boardIsComplete(p.board));
+  }
+
+  // ストリート進行。
+  // - FLが絡むハンド: 各プレイヤーが独立に進む。相手のFL一括配置を待たずに自分のストリートを進められる
+  //   （FLボードは精算まで非公開なので、独立進行でも同時公開ルールの公平性は損なわれない）。
+  // - 通常ハンド（両者FLでない）: 従来どおりロックステップ（全員submit→全員次へ）で同時公開を維持。
+  private advance(): void {
     const s = this.state;
-    // 全員FL中はストリートを配っても全員submit済みのままなので、進めるところまで一気に進める
-    while (s.players.every((p) => p.submitted)) {
-      if (s.street < 2) {
-        s.street += 1;
-        this.dealStreet();
-      } else {
-        this.scoreCurrentHand();
-        return;
+    const handHasFantasy = s.players.some((p) => p.inFantasy);
+
+    if (handHasFantasy) {
+      // submit済みで未完成の非FLプレイヤーに、自分の次ストリートを配る（相手を待たない）
+      let dealtAny = true;
+      while (dealtAny) {
+        dealtAny = false;
+        for (const p of s.players) {
+          if (p.submitted && !p.inFantasy && !boardIsComplete(p.board) && p.street < 2) {
+            p.street += 1;
+            this.dealToPlayer(p);
+            dealtAny = true;
+          }
+        }
+      }
+    } else {
+      // ロックステップ: 全員submitしたら、未完成の全員に次ストリートを配る
+      while (s.players.every((p) => p.submitted) && !this.allBoardsComplete()) {
+        for (const p of s.players) {
+          if (!boardIsComplete(p.board)) {
+            p.street += 1;
+            this.dealToPlayer(p);
+          }
+        }
       }
     }
+
+    s.street = Math.max(...s.players.map((p) => p.street)); // 表示フォールバック用
+    if (this.allBoardsComplete()) this.scoreCurrentHand();
   }
 
   private scoreCurrentHand(): void {

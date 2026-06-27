@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { chooseCpuPlacementWithDiscard, computeRatingChanges, GameEngine, Placement, PlayerState, rankFor, viewFor } from '../../shared/src/index';
-import { getRank, getStats, getTopPlayers, recordResults } from './ratingStore';
+import { getActiveSince, getPlayerCount, getRank, getStats, getTopPlayers, recordResults } from './ratingStore';
 
 // OFCデュエル対戦サーバー（サーバー権威）
 //
@@ -64,7 +64,7 @@ interface QueueEntry {
   uid: string;
   playerId: string;
   token: string;
-  matchType: string; // 'casual' | 'rated'（現状はcasualのみ稼働。ratedは将来用）
+  matchType: string; // 旧プロトコル互換用。カジュアル廃止後は全てレート扱い（tryMatchでは未使用）
 }
 let queue: QueueEntry[] = [];
 
@@ -91,23 +91,19 @@ function leaveQueue(ws: WebSocket): void {
   if (queue.length !== before) broadcastQueue();
 }
 
-// 同じ matchType の人間が2人揃った卓だけを作る。
-// ヘッズアップ＝レート/カジュアルとも「人間 vs 人間」専用。CPU（ボット）とはマッチさせない。
-// 相手が見つからなければキューで待機し続ける（キャンセルは leaveQueue）。
+// ランダムマッチは全て「人間 vs 人間」のレート対戦（カジュアルは廃止）。
+// 旧クライアントが casual を送ってきても同じ単一キューに入れて population を集約する。
+// CPU（ボット）とはマッチさせない。相手がいなければキューで待機（キャンセルは leaveQueue）。
 function tryMatch(): void {
-  for (const mt of ['casual', 'rated'] as const) {
-    let same = queue.filter((e) => e.matchType === mt);
-    while (same.length >= 2) {
-      const picked = same.slice(0, 2);
-      const pickedSet = new Set(picked);
-      queue = queue.filter((e) => !pickedSet.has(e));
-      const room = createRoom({ isRandom: true, rated: mt === 'rated' });
-      for (const e of picked) {
-        addSeat(room, { playerId: e.playerId, uid: e.uid, name: e.name, ws: e.ws, token: e.token, isBot: false });
-      }
-      startGame(room);
-      same = queue.filter((e) => e.matchType === mt);
+  while (queue.length >= 2) {
+    const picked = queue.slice(0, 2);
+    const pickedSet = new Set(picked);
+    queue = queue.filter((e) => !pickedSet.has(e));
+    const room = createRoom({ isRandom: true, rated: true });
+    for (const e of picked) {
+      addSeat(room, { playerId: e.playerId, uid: e.uid, name: e.name, ws: e.ws, token: e.token, isBot: false });
     }
+    startGame(room);
   }
 }
 
@@ -312,7 +308,7 @@ function checkDeadlines(room: Room): void {
     const deadline = room.placeDeadlines.get(p.id);
     if (deadline != null && now >= deadline) {
       try {
-        const { placements } = chooseCpuPlacementWithDiscard(p.board, p.dealt, placeCountFor(p, engine.state.street));
+        const { placements } = chooseCpuPlacementWithDiscard(p.board, p.dealt, placeCountFor(p));
         engine.submitPlacement(p.id, placements);
         forcedAny = true;
       } catch { /* 競合は無視 */ }
@@ -369,10 +365,10 @@ function applyRating(room: Room): void {
   }
 }
 
-// このストリートで置く枚数（残りは捨て）。engine と同じルール
-function placeCountFor(p: PlayerState, street: number): number {
-  if (p.inFantasy) return 13;
-  return [5, 4, 4][street];
+// このプレイヤーがこのストリートで置く枚数（残りは捨て）。engine と同じルール。
+// 配り枚数 = 置き枚数 + 1 なので dealt から一意に決まり、各自のストリートに依存しない。
+function placeCountFor(p: PlayerState): number {
+  return Math.max(0, p.dealt.length - 1);
 }
 
 function scheduleAutoPlace(room: Room, playerId: string): void {
@@ -380,7 +376,7 @@ function scheduleAutoPlace(room: Room, playerId: string): void {
   if (!engine) return;
   const p = engine.state.players.find((x) => x.id === playerId);
   if (!p || p.submitted) return;
-  const { placements } = chooseCpuPlacementWithDiscard(p.board, p.dealt, placeCountFor(p, engine.state.street));
+  const { placements } = chooseCpuPlacementWithDiscard(p.board, p.dealt, placeCountFor(p));
   setTimeout(() => {
     if (!room.engine) return;
     const pp = room.engine.state.players.find((x) => x.id === playerId);
@@ -397,8 +393,83 @@ function scheduleAutoPlace(room: Room, playerId: string): void {
 
 // ---- 接続ハンドラ -----------------------------------------------------------
 
+const PRIVACY_POLICY_HTML = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー｜OFCデュエル</title>
+<style>
+  body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+         max-width: 720px; margin: 0 auto; padding: 24px; line-height: 1.8; color: #1c1c1c; }
+  h1 { font-size: 1.5rem; border-bottom: 2px solid #d4af37; padding-bottom: 8px; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; color: #0b3d2e; }
+  a { color: #1565c0; }
+  .meta { color: #666; font-size: .9rem; }
+</style>
+</head>
+<body>
+<h1>プライバシーポリシー（OFCデュエル）</h1>
+<p class="meta">最終更新日: 2026-06-14</p>
+<p>「OFCデュエル」（以下「本アプリ」）は、Entrogix（個人開発者）が提供するカードゲームアプリです。本アプリにおける利用者情報の取り扱いについて、以下のとおり定めます。</p>
+<h2>1. アプリが自ら収集する情報</h2>
+<p><strong>本アプリ自体がアカウント情報や個人情報を収集することはありません。</strong></p>
+<ul>
+  <li>アカウント登録は不要です</li>
+  <li>ゲームの進行状況は端末内にのみ保存されます</li>
+  <li>オンライン対戦時に入力するプレイヤー名とゲームの手札情報は、対戦の進行のためだけにサーバーへ送信され、対戦終了後に破棄されます。個人を特定する情報とは紐付けません</li>
+</ul>
+<h2>2. 広告について</h2>
+<p>本アプリは Google AdMob による広告（バナー広告・全画面動画広告）を表示します。AdMob は広告配信・効果測定のために、広告識別子（iOSのIDFA / AndroidのAdID）、おおよその位置情報、デバイス情報等を収集・利用する場合があります。</p>
+<ul>
+  <li>取り扱いの詳細: <a href="https://policies.google.com/technologies/partner-sites">Googleが広告でデータを使用する方法</a> / <a href="https://support.google.com/admob/answer/6128543">AdMobのプライバシー</a></li>
+  <li>iOSでは初回起動時にトラッキング許可（ATT）のダイアログを表示します。拒否した場合は、パーソナライズされない広告のみが表示されます</li>
+  <li>本アプリは現在、広告以外の目的でこれらの情報を収集・保存しません</li>
+</ul>
+<h2>3. 情報の第三者提供</h2>
+<p>法令に基づく場合を除き、利用者の情報を第三者に提供することはありません。</p>
+<h2>4. お問い合わせ</h2>
+<ul>
+  <li>開発者: Entrogix</li>
+  <li>連絡先: entrogix.works@gmail.com</li>
+</ul>
+<h2>5. 改定</h2>
+<p>本ポリシーは必要に応じて改定されることがあります。重要な変更がある場合は、アプリ内またはストアページでお知らせします。</p>
+</body>
+</html>`;
+
 // HTTPサーバーを内包（Render等のヘルスチェックに200を返す）。WSはupgradeで処理
 const httpServer = createServer((req, res) => {
+  if (req.url === '/privacy-policy' || req.url === '/privacy-policy.html') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(PRIVACY_POLICY_HTML);
+    return;
+  }
+  // オンライン人数の計測用スナップショット（誰でも閲覧可・読み取り専用・個人情報なし）
+  if (req.url === '/stats' || req.url === '/stats.json') {
+    const DAY = 86400000;
+    let inGame = 0;
+    let liveRooms = 0;
+    for (const room of rooms.values()) {
+      if (!room.engine) continue;
+      liveRooms += 1;
+      for (const seat of room.seats.values()) {
+        if (!seat.isBot && seat.ws !== null) inGame += 1;
+      }
+    }
+    const body = {
+      ts: new Date().toISOString(),
+      connected: wss.clients.size,   // 接続中のソケット数（メニュー含む）
+      inQueue: queue.length,         // マッチ待ち人数
+      inGame,                        // 対戦中の人間プレイヤー数
+      activeRooms: liveRooms,        // 進行中の卓数
+      totalPlayers: getPlayerCount(),// 累計UID（1局以上完了）
+      activeToday: getActiveSince(Date.now() - DAY), // 直近24hにプレイしたUID数（揮発注意）
+    };
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(body));
+    return;
+  }
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
   res.end('OFCデュエル server is running');
 });

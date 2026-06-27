@@ -116,7 +116,7 @@ export function viewFor(state: GameState, playerId: string): PlayerGameView {
     },
     opponents,
     phase: state.phase,
-    street: state.street,
+    street: me.street, // 各プレイヤー自身のストリート（FL絡みハンドでは相手と非同期に進むため）
     handNumber: state.handNumber,
     remainingHands: Math.max(0, state.targetHands - state.handNumber + 1),
     result: revealAll ? state.lastResult : null,
