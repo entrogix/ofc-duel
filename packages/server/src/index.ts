@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { chooseCpuPlacementWithDiscard, chooseCpuPlacementWithDiscardSkilled, computeRatingChanges, computeRatingVsBot, DEFAULT_RATING, GameEngine, Placement, PlayerState, randomBotName, rankFor, RATING_FLOOR, skillForRating, viewFor } from '../../shared/src/index';
-import { getActiveSince, getPlayerCount, getRank, getStats, getTopPlayers, initRatingStore, recordResults, storeBackend } from './ratingStore';
+import { getActiveSince, getPlayerCount, getRank, getStats, getTopPlayers, initRatingStore, recordResults, storeBackend, storeHealthy } from './ratingStore';
 
 // OFCデュエル対戦サーバー（サーバー権威）
 //
@@ -551,6 +551,7 @@ const httpServer = createServer((req, res) => {
       totalPlayers: getPlayerCount(),// 累計UID（1局以上完了）
       activeToday: getActiveSince(Date.now() - DAY), // 直近24hにプレイしたUID数
       store: storeBackend(),         // 'redis'=Upstash永続 / 'file'=揮発（環境変数で切替）
+      storeOk: storeHealthy(),       // redis時: 起動ロード成功か（false=URL/TOKEN要確認）
     };
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(body));

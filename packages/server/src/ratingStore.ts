@@ -44,10 +44,17 @@ const FILE = process.env.OFC_RATING_FILE ?? join(here, '..', 'data', 'ratings.js
 
 let store: Record<string, PlayerStats> = {};
 let loaded = false;
+let redisHealthy = false; // 起動時のUpstashロードが成功したか（=認証情報が有効か）
 
 // 現在の永続先（/stats で公開し、Upstashが効いているか即確認できるようにする）
 export function storeBackend(): 'redis' | 'file' {
   return useRedis ? 'redis' : 'file';
+}
+
+// 永続先が正常か。file は常に true、redis は起動時ロード成功時のみ true。
+// /stats で storeOk:false なら UPSTASH の URL/TOKEN を疑う。
+export function storeHealthy(): boolean {
+  return useRedis ? redisHealthy : true;
 }
 
 // ---- Upstash Redis（REST）ヘルパ -------------------------------------------
@@ -94,8 +101,10 @@ export async function initRatingStore(): Promise<void> {
         try { next[flat[i]] = JSON.parse(flat[i + 1]); } catch { /* 壊れた行は捨てる */ }
       }
       store = next;
+      redisHealthy = true;
       console.log(`[ratingStore] Upstash Redis からロード（${Object.keys(store).length} players）`);
     } catch (e) {
+      redisHealthy = false;
       console.error(`[ratingStore] Upstash ロード失敗、空で継続: ${(e as Error).message}`);
       store = {};
     }
