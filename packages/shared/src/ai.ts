@@ -281,3 +281,81 @@ export function chooseCpuPlacementWithDiscard(
   if (!best) throw new Error('捨て付き配置の探索に失敗しました');
   return { placements: best.placements, discarded: best.discarded };
 }
+
+// ---- 強度可変CPU（レート対戦のボット用） -----------------------------------
+//
+// レート対戦のボットは「割当レートに見合った強さ」で打たせる必要がある（最適固定だと
+// 新人が瞬殺され離脱する／較正が効かない）。skill∈[0,1] を1ストリートごとに判定し、
+// 確率 skill で最適手、(1-skill) で弱手（ランダム配置）を打つ。skill→実効レートの
+// 対応は sim/strength_calibration.ts で計測する（balance_sim の skillPlace と同方式）。
+
+// 弱手: placeCount 枚をランダムに残し、空きのある行へランダムに置く（捨ては残り）。
+function weakPlacementWithDiscard(
+  board: Board,
+  dealt: Card[],
+  placeCount: number,
+  rng: () => number,
+): { placements: Placement[]; discarded: Card[] } {
+  const shuffled = [...dealt].sort(() => rng() - 0.5);
+  const keep = shuffled.slice(0, placeCount);
+  const discarded = shuffled.slice(placeCount);
+  const rem: Record<Row, number> = {
+    front: ROW_CAPACITY.front - board.front.length,
+    middle: ROW_CAPACITY.middle - board.middle.length,
+    back: ROW_CAPACITY.back - board.back.length,
+  };
+  const placements: Placement[] = [];
+  for (const card of keep) {
+    const avail = ROWS.filter((r) => rem[r] > 0);
+    const row = avail[Math.floor(rng() * avail.length)] ?? ROWS.find((r) => rem[r] > 0)!;
+    rem[row] -= 1;
+    placements.push({ card, row });
+  }
+  return { placements, discarded };
+}
+
+// 強度較正テーブル（sim/strength_calibration.ts の出力）。skill 昇順＝実効レート昇順。
+// 末尾 skill=1.0 が最強（anchor）。AIや較正条件を変えたら再計測してここを差し替える。
+const STRENGTH_TABLE: { skill: number; rating: number }[] = [
+  // sim/strength_calibration.ts 実測（N=300 / chips=50 / 8ハンド / anchor=1900・2026-06-28）
+  { skill: 0.0, rating: 700 },
+  { skill: 0.2, rating: 910 },
+  { skill: 0.35, rating: 1252 },
+  { skill: 0.5, rating: 1377 },
+  { skill: 0.65, rating: 1582 },
+  { skill: 0.8, rating: 1741 },
+  { skill: 0.9, rating: 1821 },
+  { skill: 1.0, rating: 1890 },
+];
+
+// 目標レートで打たせるための skill を返す（テーブルを線形補間・範囲外はクランプ）。
+// レート対戦のボットはこの skill で打つことで「割当レート相応の強さ」になる。
+export function skillForRating(targetRating: number): number {
+  const t = STRENGTH_TABLE;
+  if (targetRating <= t[0].rating) return t[0].skill;
+  if (targetRating >= t[t.length - 1].rating) return t[t.length - 1].skill;
+  for (let i = 0; i < t.length - 1; i++) {
+    const a = t[i];
+    const b = t[i + 1];
+    if (targetRating >= a.rating && targetRating <= b.rating && b.rating > a.rating) {
+      const f = (targetRating - a.rating) / (b.rating - a.rating);
+      return a.skill + f * (b.skill - a.skill);
+    }
+  }
+  return 1.0;
+}
+
+// 強度付き配置。skill=1 は最適探索（chooseCpuPlacementWithDiscard）と等価。
+export function chooseCpuPlacementWithDiscardSkilled(
+  board: Board,
+  dealt: Card[],
+  placeCount: number,
+  skill: number,
+  rng: () => number = Math.random,
+): { placements: Placement[]; discarded: Card[] } {
+  const s = Math.max(0, Math.min(1, skill));
+  if (s >= 1 || rng() < s) {
+    return chooseCpuPlacementWithDiscard(board, dealt, placeCount, rng);
+  }
+  return weakPlacementWithDiscard(board, dealt, placeCount, rng);
+}

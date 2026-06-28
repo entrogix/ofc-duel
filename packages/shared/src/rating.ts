@@ -58,6 +58,22 @@ export function computeRatingChanges(players: RatingPlayer[]): Map<string, Ratin
   return result;
 }
 
+// 人間1人 vs 較正ボット1体のレート変動（人間のみ更新）。
+// ボットは uid を持たないが「割当レート」を持ち、その rating に対し通常のEloで人間を動かす。
+// ボットの強度はこの rating に較正されている（ai.skillForRating）ため、期待勝率≒0.5＝
+// 期待変動0となり、ボット狩りでのレート水増しは成立しない。ボット自身は永続化しない。
+export function computeRatingVsBot(
+  human: { uid: string; rating: number; chips: number },
+  bot: { rating: number; chips: number },
+): RatingChange | null {
+  if (!human.uid) return null;
+  const sa = human.chips > bot.chips ? 1 : human.chips < bot.chips ? 0 : 0.5;
+  const ea = expectedScore(human.rating, bot.rating);
+  const raw = Math.round(K * (sa - ea));
+  const after = Math.max(RATING_FLOOR, human.rating + raw);
+  return { uid: human.uid, before: human.rating, after, delta: after - human.rating };
+}
+
 export interface Rank {
   key: string;
   label: string;

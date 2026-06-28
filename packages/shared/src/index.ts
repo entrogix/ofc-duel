@@ -6,3 +6,4 @@ export * from './engine';
 export * from './view';
 export * from './ai';
 export * from './rating';
+export * from './names';
