@@ -3,11 +3,18 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { DEFAULT_RATING } from '../../shared/src/index';
 
-// UIDに紐づくレート/戦績の永続ストア（MVP: JSONファイル）。
+// UIDに紐づくレート/戦績の永続ストア。
 //
-// ⚠️ 本番デプロイ（Render無料枠等）はディスクが揮発するため、再デプロイで消える。
-//    本番運用時は OFC_RATING_FILE に永続ボリュームを指すか、外部DBへ差し替える前提。
-//    そのための薄いインターフェース（getStats/getRating/recordResults）に閉じてある。
+// 永続先は環境変数で切替（コード変更なしで差し替え可能）:
+//   - Upstash Redis（REST）… UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN がある時。
+//     Render無料枠はディスク揮発で再デプロイのたびにレートが消えるため、外部に逃がす。
+//   - ローカルJSONファイル … 上記が無い時（開発・テスト）。OFC_RATING_FILE で場所変更可。
+//
+// 設計（重要）: 呼び出し側（index.ts）を変えないため**読み取りは全て同期**のまま。
+//   起動時に initRatingStore() でバックエンド全体をインメモリ store へロードし、
+//   以降の get系は store から同期で返す。書き込みは store を即時更新し、
+//   バックエンドへは**非同期 write-through**（fire-and-forget・失敗してもゲームは止めない）。
+//   Redisは uid 単位の Hash フィールドに保存するので、1試合の書き込みは変更uidのみで軽い。
 
 export interface MatchRecord {
   at: number; // 終了時刻
@@ -27,28 +34,97 @@ export interface PlayerStats {
   recent?: MatchRecord[]; // 直近の対戦履歴（新しい順・最大20）
 }
 
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || '';
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+const REDIS_KEY = process.env.OFC_RATING_REDIS_KEY || 'ofc:ratings';
+const useRedis = !!(UPSTASH_URL && UPSTASH_TOKEN);
+
 const here = dirname(fileURLToPath(import.meta.url));
 const FILE = process.env.OFC_RATING_FILE ?? join(here, '..', 'data', 'ratings.json');
 
-let store: Record<string, PlayerStats> = load();
+let store: Record<string, PlayerStats> = {};
+let loaded = false;
 
-function load(): Record<string, PlayerStats> {
+// 現在の永続先（/stats で公開し、Upstashが効いているか即確認できるようにする）
+export function storeBackend(): 'redis' | 'file' {
+  return useRedis ? 'redis' : 'file';
+}
+
+// ---- Upstash Redis（REST）ヘルパ -------------------------------------------
+
+async function redisCommand(cmd: unknown[]): Promise<any> {
+  const res = await fetch(UPSTASH_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmd),
+  });
+  if (!res.ok) throw new Error(`Upstash ${res.status}: ${await res.text()}`);
+  return res.json(); // { result: ... }
+}
+
+async function redisPipeline(cmds: unknown[][]): Promise<void> {
+  const res = await fetch(`${UPSTASH_URL}/pipeline`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmds),
+  });
+  if (!res.ok) throw new Error(`Upstash pipeline ${res.status}: ${await res.text()}`);
+}
+
+// ---- ロード / 永続化 --------------------------------------------------------
+
+function loadFile(): Record<string, PlayerStats> {
   try {
     if (existsSync(FILE)) return JSON.parse(readFileSync(FILE, 'utf8'));
   } catch {
-    // 壊れていたら空から始める（戦績消失より継続を優先）
+    // 壊れていたら空から（戦績消失より継続を優先）
   }
   return {};
 }
 
-function persist(): void {
-  try {
-    mkdirSync(dirname(FILE), { recursive: true });
-    writeFileSync(FILE, JSON.stringify(store, null, 2));
-  } catch {
-    // 書き込み不可（読み取り専用FS等）でもゲーム進行は止めない
+// 起動時に1回呼ぶ（index.ts が listen 前に await）。バックエンド全体をインメモリへ。
+export async function initRatingStore(): Promise<void> {
+  if (loaded) return;
+  if (useRedis) {
+    try {
+      const { result } = await redisCommand(['HGETALL', REDIS_KEY]);
+      const flat: string[] = Array.isArray(result) ? result : [];
+      const next: Record<string, PlayerStats> = {};
+      for (let i = 0; i + 1 < flat.length; i += 2) {
+        try { next[flat[i]] = JSON.parse(flat[i + 1]); } catch { /* 壊れた行は捨てる */ }
+      }
+      store = next;
+      console.log(`[ratingStore] Upstash Redis からロード（${Object.keys(store).length} players）`);
+    } catch (e) {
+      console.error(`[ratingStore] Upstash ロード失敗、空で継続: ${(e as Error).message}`);
+      store = {};
+    }
+  } else {
+    store = loadFile();
+    console.log(`[ratingStore] ローカルファイルからロード（${Object.keys(store).length} players / ${FILE}）`);
+  }
+  loaded = true;
+}
+
+// 変更された uid のみ永続化（fire-and-forget）。引数なしは全件（リセット等）。
+function persist(changedUids?: string[]): void {
+  if (useRedis) {
+    const uids = (changedUids ?? Object.keys(store)).filter((u) => store[u]);
+    if (!uids.length) return;
+    const cmds = uids.map((u) => ['HSET', REDIS_KEY, u, JSON.stringify(store[u])]);
+    redisPipeline(cmds).catch((e) =>
+      console.error(`[ratingStore] Upstash 保存失敗（次回更新で再書き込み）: ${(e as Error).message}`));
+  } else {
+    try {
+      mkdirSync(dirname(FILE), { recursive: true });
+      writeFileSync(FILE, JSON.stringify(store, null, 2));
+    } catch {
+      // 書き込み不可（読み取り専用FS等）でもゲーム進行は止めない
+    }
   }
 }
+
+// ---- 読み取り（全て同期・インメモリから） ----------------------------------
 
 export function getStats(uid: string): PlayerStats {
   return store[uid] ?? { rating: DEFAULT_RATING, games: 0, wins: 0, name: '', updatedAt: 0 };
@@ -64,7 +140,6 @@ export function getPlayerCount(): number {
 }
 
 // 指定エポックms以降に対戦したユニークUID数（日次/週次アクティブの近似）。
-// ⚠️ Render無料枠はディスク揮発のため再デプロイで0に戻る点に注意。
 export function getActiveSince(sinceMs: number): number {
   let n = 0;
   for (const s of Object.values(store)) {
@@ -115,6 +190,7 @@ export interface ResultEntry {
 export function recordResults(entries: ResultEntry[]): void {
   if (entries.length === 0) return;
   const now = Date.now();
+  const changed: string[] = [];
   for (const e of entries) {
     if (!e.uid) continue;
     const prev = store[e.uid] ?? { rating: DEFAULT_RATING, games: 0, wins: 0, name: '', updatedAt: 0 };
@@ -135,11 +211,13 @@ export function recordResults(entries: ResultEntry[]): void {
       updatedAt: now,
       recent,
     };
+    changed.push(e.uid);
   }
-  persist();
+  persist(changed);
 }
 
 // テスト用: ストアを差し替え/初期化する
 export function _resetForTest(seed: Record<string, PlayerStats> = {}): void {
   store = seed;
+  loaded = true; // テストは init を呼ばずに直接シードするため
 }

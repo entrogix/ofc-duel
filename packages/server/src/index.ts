@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { chooseCpuPlacementWithDiscard, chooseCpuPlacementWithDiscardSkilled, computeRatingChanges, computeRatingVsBot, DEFAULT_RATING, GameEngine, Placement, PlayerState, randomBotName, rankFor, RATING_FLOOR, skillForRating, viewFor } from '../../shared/src/index';
-import { getActiveSince, getPlayerCount, getRank, getStats, getTopPlayers, recordResults } from './ratingStore';
+import { getActiveSince, getPlayerCount, getRank, getStats, getTopPlayers, initRatingStore, recordResults, storeBackend } from './ratingStore';
 
 // OFCデュエル対戦サーバー（サーバー権威）
 //
@@ -549,7 +549,8 @@ const httpServer = createServer((req, res) => {
       inGame,                        // 対戦中の人間プレイヤー数
       activeRooms: liveRooms,        // 進行中の卓数
       totalPlayers: getPlayerCount(),// 累計UID（1局以上完了）
-      activeToday: getActiveSince(Date.now() - DAY), // 直近24hにプレイしたUID数（揮発注意）
+      activeToday: getActiveSince(Date.now() - DAY), // 直近24hにプレイしたUID数
+      store: storeBackend(),         // 'redis'=Upstash永続 / 'file'=揮発（環境変数で切替）
     };
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(body));
@@ -755,6 +756,10 @@ function handleMessage(ws: WebSocket, msg: any): void {
       throw new Error(`不明なメッセージ: ${msg.type}`);
   }
 }
+
+// レートストアをロード（Upstash or ファイル）してから受け付け開始。
+// ロード前に接続を受けると未ロードの空ストアを書き戻して消す恐れがあるため listen 前に await。
+await initRatingStore();
 
 httpServer.listen(PORT, () => {
   console.log(`OFCデュエル対戦サーバー起動: ws://localhost:${PORT}`);
