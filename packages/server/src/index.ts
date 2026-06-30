@@ -50,7 +50,7 @@ interface Room {
   hostId: string | null; // ランダムマッチは null（サーバー主導）
   seats: Map<string, Seat>; // playerId -> Seat（挿入順 = 着席順）
   engine: GameEngine | null;
-  placeDeadlines: Map<string, number>; // playerId -> epoch ms。プレイヤーごとの配置制限時刻
+  placeDeadlines: Map<string, { at: number; street: number }>; // playerId -> {制限時刻(epoch ms), 対象ストリート}。次ストリートに進んだらリセットする
   timers: { place?: NodeJS.Timeout; result?: NodeJS.Timeout };
 }
 
@@ -265,7 +265,7 @@ function broadcastState(room: Room): void {
     send(seat.ws, {
       type: 'state',
       view: viewFor(room.engine.state, seat.playerId),
-      placeDeadline: room.placeDeadlines.get(seat.playerId) ?? null,
+      placeDeadline: room.placeDeadlines.get(seat.playerId)?.at ?? null,
     });
   }
 }
@@ -315,12 +315,16 @@ function advance(room: Room): void {
         }
         const seat = room.seats.get(p.id);
         if (!seat || seat.isBot || seat.ws === null) continue;
-        // 初回のみデッドラインをセット（再 advance でリセットしない）
-        if (!room.placeDeadlines.has(p.id)) {
+        // このストリート用のデッドラインが無い、または前ストリートのものなら付け直す。
+        // プレイヤーが次ストリートに進んだら持ち時間を満タンにリセットする
+        // （旧実装は playerId 単位で一度きり設定だったため、前ストリートの制限時刻が
+        //   次ストリートに流用され、時間が残っているのに即 force 配置される致命バグがあった）。
+        const existing = room.placeDeadlines.get(p.id);
+        if (!existing || existing.street !== p.street) {
           const limit = p.inFantasy ? FL_PLACE_LIMIT_MS : PLACE_LIMIT_MS;
-          room.placeDeadlines.set(p.id, Date.now() + limit);
+          room.placeDeadlines.set(p.id, { at: Date.now() + limit, street: p.street });
         }
-        nextDeadline = Math.min(nextDeadline, room.placeDeadlines.get(p.id)!);
+        nextDeadline = Math.min(nextDeadline, room.placeDeadlines.get(p.id)!.at);
       }
       if (nextDeadline !== Infinity) {
         const delay = Math.max(0, nextDeadline - Date.now());
@@ -353,7 +357,7 @@ function checkDeadlines(room: Room): void {
   for (const p of engine.state.players) {
     if (p.submitted) continue;
     const deadline = room.placeDeadlines.get(p.id);
-    if (deadline != null && now >= deadline) {
+    if (deadline != null && now >= deadline.at) {
       try {
         const { placements } = chooseCpuPlacementWithDiscard(p.board, p.dealt, placeCountFor(p));
         engine.submitPlacement(p.id, placements);

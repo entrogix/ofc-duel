@@ -232,6 +232,57 @@ async function testCasualAndRatedCrossMatch(): Promise<void> {
   console.log('✔ 旧casual×新rated が同一キューでマッチし双方レート更新');
 }
 
+async function testDeadlineResetsPerStreet(): Promise<void> {
+  // 各ストリートで DELAY(450ms) 待ってから配置する2人。制限時間は 700ms なので、
+  // 本来は毎ストリート時間内に置けて一度も force 配置されないはず。
+  // 旧バグ（デッドラインを playerId 単位で一度きり設定）だと、前ストリートで使った
+  // 時間の分だけ次ストリートの持ち時間が削られ、450ms 待つ前に force 配置されてしまう。
+  const DELAY = 450;
+  interface DelayedClient { c: TestClient; forced: number[]; placedSelf: number[]; }
+  function makeClient(): DelayedClient {
+    const forced: number[] = [];
+    const placedSelf: number[] = [];
+    let scheduledKey = '';
+    const holder: DelayedClient = { c: null as unknown as TestClient, forced, placedSelf };
+    holder.c = new TestClient({
+      autoPlay: false,
+      onState: (view) => {
+        if (view.phase !== 'placing' || view.you.submitted || view.you.dealt.length === 0) return;
+        const key = `${view.handNumber}:${view.street}`;
+        if (scheduledKey === key) return; // このストリートは予約済み
+        scheduledKey = key;
+        const street = view.street;
+        setTimeout(() => {
+          const v = holder.c.lastView;
+          if (!v) return;
+          // DELAY 経過後もまだ同じストリートで未配置なら自分で置く。進んでいたら force された。
+          if (v.phase === 'placing' && !v.you.submitted && `${v.handNumber}:${v.street}` === key && v.you.dealt.length > 0) {
+            const { placements } = chooseCpuPlacementWithDiscard(v.you.board, v.you.dealt, v.you.needPlace);
+            holder.c.send({ type: 'place', placements });
+            placedSelf.push(street);
+          } else {
+            forced.push(street); // 時間内なのに進んでいた = 早期 force 配置
+          }
+        }, DELAY);
+      },
+    });
+    return holder;
+  }
+  const a = makeClient();
+  const b = makeClient();
+  await Promise.all([a.c.whenOpen(), b.c.whenOpen()]);
+  a.c.joinRandom('遅延A', 'rated', 'uid-da');
+  b.c.joinRandom('遅延B', 'rated', 'uid-db');
+  await waitFor(() => a.c.gameOver && b.c.gameOver, 30000, 'delayed game over');
+  await wait(200);
+  assert.equal(a.forced.length, 0, `A: 制限時間内なのに早期force配置された streets=${a.forced}`);
+  assert.equal(b.forced.length, 0, `B: 制限時間内なのに早期force配置された streets=${b.forced}`);
+  assert.ok(a.placedSelf.length >= 3 && b.placedSelf.length >= 3, '両者が複数ストリートを自分で配置できた');
+  a.c.close();
+  b.c.close();
+  console.log('✔ ストリートごとに制限時間がリセットされ、時間内なら早期force配置されない');
+}
+
 async function main(): Promise<void> {
   await import('./index.js');
   await wait(300); // サーバー起動待ち
@@ -242,6 +293,7 @@ async function main(): Promise<void> {
   await testReconnect();
   await testRatedMatchUpdatesRating();
   await testCasualAndRatedCrossMatch();
+  await testDeadlineResetsPerStreet();
 
   console.log('\nすべてのマッチングテスト成功');
   process.exit(0);
